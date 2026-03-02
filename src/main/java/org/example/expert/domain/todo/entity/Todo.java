@@ -23,9 +23,11 @@ public class Todo extends Timestamped {
     private String contents;
     private String weather;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+//    @ManyToOne(fetch = FetchType.LAZY)
+//    @JoinColumn(name = "user_id", nullable = false)
+//    private User user;
+
+    private Long userId;
 
     @OneToMany(mappedBy = "todo", cascade = CascadeType.REMOVE)
     private List<Comment> comments = new ArrayList<>();
@@ -33,11 +35,11 @@ public class Todo extends Timestamped {
     @OneToMany(mappedBy = "todo", cascade = CascadeType.PERSIST)
     private List<Manager> managers = new ArrayList<>();
 
-    public Todo(String title, String contents, String weather, User user) {
+    public Todo(String title, String contents, String weather, Long userId) {
         this.title = title;
         this.contents = contents;
         this.weather = weather;
-        this.user = user;
-        this.managers.add(new Manager(user, this));
+        this.userId = userId;
+        this.managers.add(new Manager(userId, this));
     }
 }

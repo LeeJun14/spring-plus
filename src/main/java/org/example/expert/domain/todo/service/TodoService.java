@@ -11,6 +11,7 @@ import org.example.expert.domain.todo.entity.Todo;
 import org.example.expert.domain.todo.repository.TodoRepository;
 import org.example.expert.domain.user.dto.response.UserResponse;
 import org.example.expert.domain.user.entity.User;
+import org.example.expert.domain.user.repository.UserRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -25,6 +26,7 @@ public class TodoService {
 
     private final TodoRepository todoRepository;
     private final WeatherClient weatherClient;
+    private final UserRepository userRepository;
 
     @Transactional
     public TodoSaveResponse saveTodo(AuthUser authUser, TodoSaveRequest todoSaveRequest) {
@@ -36,7 +38,7 @@ public class TodoService {
                 todoSaveRequest.getTitle(),
                 todoSaveRequest.getContents(),
                 weather,
-                user
+                user.getId()
         );
         Todo savedTodo = todoRepository.save(newTodo);
 
@@ -55,15 +57,19 @@ public class TodoService {
 
         Page<Todo> todos = todoRepository.findByWeatherAndModifiedAtBetween(pageable, weather, startDate, endDate);
 
-        return todos.map(todo -> new TodoResponse(
-                todo.getId(),
-                todo.getTitle(),
-                todo.getContents(),
-                todo.getWeather(),
-                new UserResponse(todo.getUser().getId(), todo.getUser().getEmail()),
-                todo.getCreatedAt(),
-                todo.getModifiedAt()
-        ));
+        return todos.map(todo -> {
+            User user = userRepository.findById(todo.getUserId()).orElseThrow(() -> new InvalidRequestException("User not found"));
+
+                    return new TodoResponse(
+                            todo.getId(),
+                            todo.getTitle(),
+                            todo.getContents(),
+                            todo.getWeather(),
+                            new UserResponse(user.getId(), user.getEmail()),
+                            todo.getCreatedAt(),
+                            todo.getModifiedAt()
+                    );
+        });
     }
 
     @Transactional(readOnly = true)
@@ -71,7 +77,7 @@ public class TodoService {
         Todo todo = todoRepository.findByIdWithUser(todoId)
                 .orElseThrow(() -> new InvalidRequestException("Todo not found"));
 
-        User user = todo.getUser();
+        User user = userRepository.findById(todo.getUserId()).orElseThrow(() -> new InvalidRequestException("User not found"));
 
         return new TodoResponse(
                 todo.getId(),
