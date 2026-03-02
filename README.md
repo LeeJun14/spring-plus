@@ -9,40 +9,8 @@ ___
 
 **문제점**: 
 
-- saveTodo 메서드는 할 일을 저장하는 역할의 POST Method에서 사용합니다. 
-- POST Method가 호출하는 서비스 코드는 Transactional의 readOnly 값이 false이어야 합니다.
-
-```
-@Service
-@RequiredArgsConstructor
-@Transactional(readOnly = true)
-public class TodoService {
-
-    private final TodoRepository todoRepository;
-    private final WeatherClient weatherClient;
-
-    public TodoSaveResponse saveTodo(AuthUser authUser, TodoSaveRequest todoSaveRequest) {
-        User user = User.fromAuthUser(authUser);
-
-        String weather = weatherClient.getTodayWeather();
-
-        Todo newTodo = new Todo(
-                todoSaveRequest.getTitle(),
-                todoSaveRequest.getContents(),
-                weather,
-                user
-        );
-        Todo savedTodo = todoRepository.save(newTodo);
-
-        return new TodoSaveResponse(
-                savedTodo.getId(),
-                savedTodo.getTitle(),
-                savedTodo.getContents(),
-                weather,
-                new UserResponse(user.getId(), user.getEmail())
-        );
-    }
-```
+- saveTodo 메서드는 할 일을 저장하는 역할의 POST Method에서 사용합니다
+- POST Method가 호출하는 서비스 코드는 Transactional의 readOnly 값이 false이어야 합니다
 
 **코드 개선**:
 
@@ -84,10 +52,10 @@ public class TodoService {
 
 **요구 사항**
 
-- User의 정보에 nickname이 필요해졌어요.
-    - User 테이블에 nickname 컬럼을 추가해주세요.
-    - nickname은 중복 가능합니다.
-- 프론트엔드 개발자가 JWT에서 유저의 닉네임을 꺼내 화면에 보여주길 원하고 있어요.
+- User의 정보에 nickname이 필요해졌어요
+    - User 테이블에 nickname 컬럼을 추가해주세요
+    - nickname은 중복 가능합니다
+- 프론트엔드 개발자가 JWT에서 유저의 닉네임을 꺼내 화면에 보여주길 원하고 있어요
 
 **코드 개선**
 
@@ -496,3 +464,242 @@ public class AuthUserArgumentResolver implements HandlerMethodArgumentResolver {
     }
 }
 ```
+
+### 3. 코드 개선 퀴즈 - JPA의 이해
+
+**요구 사항**
+
+- 할 일 검색 시 `weather` 조건으로도 검색할 수 있어야해요
+    - `weather` 조건은 있을 수도 있고, 없을 수도 있어요!
+- 할 일 검색 시 수정일 기준으로 기간 검색이 가능해야해요
+    - 기간의 시작과 끝 조건은 있을 수도 있고, 없을 수도 있어요!
+- JPQL을 사용하고, 쿼리 메소드명은 자유롭게 지정하되 너무 길지 않게 해주세요
+
+**코드 개선**
+
+- TodoController
+  - Param 추가
+
+```
+package org.example.expert.domain.todo.controller;
+
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.example.expert.domain.common.annotation.Auth;
+import org.example.expert.domain.common.dto.AuthUser;
+import org.example.expert.domain.todo.dto.request.TodoSaveRequest;
+import org.example.expert.domain.todo.dto.response.TodoResponse;
+import org.example.expert.domain.todo.dto.response.TodoSaveResponse;
+import org.example.expert.domain.todo.service.TodoService;
+import org.springframework.data.domain.Page;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDateTime;
+
+@RestController
+@RequiredArgsConstructor
+public class TodoController {
+
+    private final TodoService todoService;
+
+    @PostMapping("/todos")
+    public ResponseEntity<TodoSaveResponse> saveTodo(
+            @Auth AuthUser authUser,
+            @Valid @RequestBody TodoSaveRequest todoSaveRequest
+    ) {
+        return ResponseEntity.ok(todoService.saveTodo(authUser, todoSaveRequest));
+    }
+
+    @GetMapping("/todos")
+    public ResponseEntity<Page<TodoResponse>> getTodos(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String weather,
+            @RequestParam(required = false) LocalDateTime startDate,
+            @RequestParam(required = false) LocalDateTime endDate
+            ) {
+        return ResponseEntity.ok(todoService.getTodos(page, size, weather, startDate, endDate));
+    }
+
+    @GetMapping("/todos/{todoId}")
+    public ResponseEntity<TodoResponse> getTodo(@PathVariable long todoId) {
+        return ResponseEntity.ok(todoService.getTodo(todoId));
+    }
+}
+```
+
+- TodoRepository
+  - 기존 조회 쿼리 개선
+
+```
+package org.example.expert.domain.todo.repository;
+
+import org.example.expert.domain.todo.entity.Todo;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.time.LocalDateTime;
+import java.util.Optional;
+
+public interface TodoRepository extends JpaRepository<Todo, Long> {
+
+    @Query("SELECT t FROM Todo t LEFT JOIN FETCH t.user u " +
+            "WHERE (:weather IS NULL OR t.weather = :weather)" +
+            "AND (:startDate IS NULL OR t.modifiedAt >= :startDate)" +
+            "AND (:endDate IS NULL OR t.modifiedAt <= :endDate)" +
+            "ORDER BY t.modifiedAt DESC")
+    Page<Todo> findByWeatherAndModifiedAtBetween(Pageable pageable, @Param("weather") String weather, @Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
+
+
+
+    @Query("SELECT t FROM Todo t " +
+            "LEFT JOIN t.user " +
+            "WHERE t.id = :todoId")
+    Optional<Todo> findByIdWithUser(@Param("todoId") Long todoId);
+}
+```
+
+### 4. 테스트 코드 퀴즈 - 컨트롤러 테스트의 이해
+
+**문제점**:
+
+- 테스트 코드의 검증 예상 상태 값이 `200 OK`로 작성되었습니다
+- 로직의 작동 실패 시 `400 Bad Request`를 반환하여야 합니다
+
+**코드 개선**
+
+- TodoControllerTest
+  - 검증 예상 값 `400 Bad Request`로 변경
+
+```
+package org.example.expert.domain.todo.controller;
+
+import org.example.expert.domain.common.dto.AuthUser;
+import org.example.expert.domain.common.exception.InvalidRequestException;
+import org.example.expert.domain.todo.dto.response.TodoResponse;
+import org.example.expert.domain.todo.service.TodoService;
+import org.example.expert.domain.user.dto.response.UserResponse;
+import org.example.expert.domain.user.entity.User;
+import org.example.expert.domain.user.enums.UserRole;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.LocalDateTime;
+
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(TodoController.class)
+class TodoControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockBean
+    private TodoService todoService;
+
+    @Test
+    void todo_단건_조회에_성공한다() throws Exception {
+        // given
+        long todoId = 1L;
+        String title = "title";
+        AuthUser authUser = new AuthUser(1L, "email", "홍길동", UserRole.USER);
+        User user = User.fromAuthUser(authUser);
+        UserResponse userResponse = new UserResponse(user.getId(), user.getEmail());
+        TodoResponse response = new TodoResponse(
+                todoId,
+                title,
+                "contents",
+                "Sunny",
+                userResponse,
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
+
+        // when
+        when(todoService.getTodo(todoId)).thenReturn(response);
+
+        // then
+        mockMvc.perform(get("/todos/{todoId}", todoId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(todoId))
+                .andExpect(jsonPath("$.title").value(title));
+    }
+
+    @Test
+    void todo_단건_조회_시_todo가_존재하지_않아_예외가_발생한다() throws Exception {
+        // given
+        long todoId = 1L;
+
+        // when
+        when(todoService.getTodo(todoId))
+                .thenThrow(new InvalidRequestException("Todo not found"));
+
+        // then
+        mockMvc.perform(get("/todos/{todoId}", todoId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(HttpStatus.BAD_REQUEST.name()))
+                .andExpect(jsonPath("$.code").value(HttpStatus.BAD_REQUEST.value()))
+                .andExpect(jsonPath("$.message").value("Todo not found"));
+    }
+}
+```
+
+### 5. 코드 개선 퀴즈 - AOP의 이해
+
+**요구 사항**
+
+- `UserAdminController` 클래스의 `changeUserRole()` 메소드가 실행 전 동작해야해요
+- `AdminAccessLoggingAspect` 클래스에 있는 AOP가 개발 의도에 맞도록 코드를 수정해주세요
+
+**코드 개선**
+
+- AdminAccessLoggingAspect
+  - After -> Before 메서드 실행 전 동작으로 변경
+  - execution의 클래스와 메서드 변경
+
+```
+package org.example.expert.aop;
+
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.annotation.After;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+
+@Slf4j
+@Aspect
+@Component
+@RequiredArgsConstructor
+public class AdminAccessLoggingAspect {
+
+    private final HttpServletRequest request;
+
+    @Before("execution(* org.example.expert.domain.user.controller.UserAdminController.changeUserRole(..))")
+    public void logAfterChangeUserRole(JoinPoint joinPoint) {
+        String userId = String.valueOf(request.getAttribute("userId"));
+        String requestUrl = request.getRequestURI();
+        LocalDateTime requestTime = LocalDateTime.now();
+
+        log.info("Admin Access Log - User ID: {}, Request Time: {}, Request URL: {}, Method: {}",
+                userId, requestTime, requestUrl, joinPoint.getSignature().getName());
+    }
+}
+```
+
+
